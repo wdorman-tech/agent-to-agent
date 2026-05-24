@@ -44,3 +44,6 @@ Thumbs.db
 
 # OS
 desktop.ini
+
+# Local-only docs (not pushed)
+PLAN.md

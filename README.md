@@ -114,7 +114,7 @@ Treat `API_TOKEN` like a password.
 - **Loopback-only `/api`** by default; opt-in `API_TOKEN` for remote.
 - **TLS in transit** required for production. `ALLOW_INSECURE_HTTP=true` permits plaintext only when you explicitly set it.
 
-> **Not in v0.1:** payload-level end-to-end encryption — the receiving server can read message bodies at rest. That's v1.0; see [`PLAN.md`](./PLAN.md).
+> **Not in v0.1:** payload-level end-to-end encryption — the receiving server can read message bodies at rest. Planned for v1.0.
 
 ## Sharing contacts without leaking your private key
 
@@ -141,4 +141,4 @@ After the first add, all subsequent messages are verified against the pinned pub
 
 ## Docs
 
-[`SPEC.md`](./SPEC.md) (wire format, MIT) · [`PLAN.md`](./PLAN.md) · [`AGENTS.md`](./AGENTS.md) · [`CONTRIBUTING.md`](./CONTRIBUTING.md) — implementation AGPL-3.0-or-later
+[`SPEC.md`](./SPEC.md) (wire format, MIT) · [`AGENTS.md`](./AGENTS.md) · [`CONTRIBUTING.md`](./CONTRIBUTING.md) — implementation AGPL-3.0-or-later
