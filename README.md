@@ -1,23 +1,25 @@
 # agent-to-agent
 
-> Email for AI agents. Self-hosted, federated, signed. No central server.
+> **Email for AI agents.** Self-hosted, federated, signed. No central server.
+> Your AI gets an inbox. Friends' AIs send messages to it. That's it.
 
 ![status](https://img.shields.io/badge/status-v0.1-blue)
 ![license-impl](https://img.shields.io/badge/license%20(impl)-AGPL--3.0--or--later-orange)
 ![license-spec](https://img.shields.io/badge/license%20(spec)-MIT-green)
 ![node](https://img.shields.io/badge/node-%E2%89%A522-339933)
 
-Two AI agents, each running their own little server on hardware they
-control. They exchange messages by signing JSON envelopes and POSTing
-them to each other's inboxes over HTTPS. To send to someone you need
-their **contact code** (a single `a2a1.<base32>` string they share
-with you). To receive from someone they have to have added you back —
-inbox rejects everyone not in the local contacts list. Symmetric.
+Each agent owns a long-lived Ed25519 keypair. You share your **contact
+code** (one `a2a1.<base32>` string ~150 chars long) with whomever you
+want to message. They paste it into their address book; you paste theirs
+into yours. From then on either of your AIs can send the other free-form
+text messages. Inbox rejects anyone not in the local contacts table —
+symmetric add or no delivery.
 
 ```
    Your box                              Friend's box
    ┌──────────────────────────┐          ┌──────────────────────────┐
-   │ Local AI                 │          │ Local AI                 │
+   │ Local AI (Claude / GPT / │          │ Local AI                 │
+   │  Ollama / your code)     │          │                          │
    │   │ loopback /api        │          │   │ loopback /api        │
    │   ▼                      │          │   ▼                      │
    │ a2a:4242                 │          │ a2a:4242                 │
@@ -25,186 +27,292 @@ inbox rejects everyone not in the local contacts list. Symmetric.
    └──────────────────────────┘          └──────────────────────────┘
 ```
 
-**The whole protocol is one envelope and two endpoints.** Anything
-agents want to coordinate on (calendar events, file references,
-todos) lives in the natural-language message body. The receiving AI
-reads it and decides what to do.
+There are no calendar / file / capability "intent types" in the protocol
+— bodies are free-form text and the receiving AI decides what they
+mean. That's the whole point: AI is good at interpreting natural
+language, so the wire stays dumb on purpose.
 
 ---
 
-## What's here
+# Set this up for your own agent
 
-- **Reference server**: TypeScript + Fastify + better-sqlite3. ~500
-  LOC. Boots in <1s.
-- **CLI**: `a2a init / me / contact (add|list|rm) / send / inbox / read / outbox`.
-- **Skills**: four skill folders in [`./skills/`](./skills/) that an
-  AI agent can install to do every operation — see [AGENTS.md](./AGENTS.md).
-- **Docker**: single `Dockerfile`, plus a `docker compose` two-agent
-  demo on a shared network.
-- **Tests**: 33 passing — canonical JSON, sign/verify, contact codes,
-  full two-agent roundtrip, security rejections (replay, stale,
-  tampered, not-a-contact, self-add).
+A complete walkthrough. ~10 minutes if you don't already have a public
+HTTPS hostname; ~2 minutes if you do.
 
-What's NOT here, on purpose: friending workflows, capability grants,
-calendar/file/todo intent types, web UI, end-to-end payload
-encryption. See [PLAN.md](./PLAN.md) for what's deferred and why.
-
----
-
-## Quick start
-
-### 1. See it work in 10 seconds
+## Step 1 — Clone and install
 
 ```bash
 git clone https://github.com/wdorman-tech/agent-to-agent.git
 cd agent-to-agent
-pnpm install
-pnpm demo
+pnpm install              # or: npm install
 ```
 
-Two agents stand up on loopback, exchange contact codes, add each
-other, and trade a threaded message — including showing what the
-contact codes look like.
+(Optional: confirm it works) — `pnpm demo` spawns two instances on
+loopback, has them add each other, exchanges a message, and prints
+the result. ~1 second end-to-end.
 
-### 2. Run your own instance
+## Step 2 — Get a public HTTPS URL for your inbox
+
+Your agent needs to be reachable from other people's boxes. Pick the
+easiest one for you:
+
+| Option | $/mo | Setup time | Best for |
+|---|---|---|---|
+| **Cloudflare Tunnel** | 0 | 5 min | You have a domain you control. |
+| **Tailscale Funnel** | 0 | 1 min | You don't, and `you-tail1234.ts.net` is fine. |
+| **VPS + Caddy** | ~5 | 30 min | You want full ownership of the box. |
+| **Local-only (dev)** | 0 | 0 | Just trying it out; can only reach yourself / friends on the same LAN / Tailscale net. |
+
+Concrete commands for the two most common:
+
+- **Cloudflare Tunnel** — install `cloudflared`, run
+  `cloudflared tunnel --url http://localhost:4242` (gives you a `*.trycloudflare.com` URL),
+  or attach to a tunnel pointing at your own domain.
+- **Tailscale Funnel** — install Tailscale, then
+  `tailscale funnel 4242` once the agent is running. You get
+  `https://<your-name>.tail1234.ts.net:443` automatically.
+
+Skip this step if you just want to play locally; pass `--dev` to
+`a2a init` in the next step.
+
+## Step 3 — Initialize your instance
 
 ```bash
-# local dev
-pnpm cli init --dev                              # writes .env, generates keys
+# Production: use the URL from Step 2
+pnpm cli init \
+  --public-url https://agent.yourdomain.com \
+  --display-name "you"
+
+# Or, for local-only / LAN testing:
+pnpm cli init --dev --display-name "you"
+```
+
+This writes `.env` (with a freshly-generated 32-byte `AGENT_MASTER_KEY`),
+creates `data/agent.db`, generates an Ed25519 keypair, and prints
+**your contact code** — copy it. That's the only string you'll share
+with anyone.
+
+> **Critical:** back up the `AGENT_MASTER_KEY` line from `.env`. Lose
+> it and your private key is gone — your contact code becomes
+> permanently invalid and you'll have to start over.
+
+## Step 4 — Run the server
+
+Development (auto-restart):
+
+```bash
 pnpm dev
-
-# prints your contact code; share with the people you want to message
-pnpm cli me
 ```
 
-For production replace `--dev` with `--public-url https://agent.your.host`
-(see **Production** below) and `pnpm build && pnpm start`.
-
-### 3. Add a contact and send
+Production:
 
 ```bash
-pnpm cli contact add 'a2a1.<paste-their-code>' -n alice
-pnpm cli send alice "hey, are you free Tuesday?"
-pnpm cli inbox          # what's come in
-pnpm cli read 01KSB...  # show a specific message + mark read
+pnpm build
+pnpm start
+# or via Docker (one container):
+docker build -t a2a:latest .
+docker run -d --name a2a --restart unless-stopped \
+  --env-file .env \
+  -p 127.0.0.1:4242:4242 \
+  -v $PWD/data:/app/data \
+  a2a:latest
 ```
 
-Both sides need to have added each other. If you send to a contact
-who hasn't added you back yet, you'll see `delivery.ok = false` and
-`HTTP 403 not_a_contact` in the error.
+Verify with `curl http://127.0.0.1:4242/healthz` → `{"ok":true,...}`.
+The public URL from Step 2 should also respond on `/.well-known/...`
+healthcheck or your tunnel's status page.
 
----
+## Step 5 — Wire your AI to the local API
 
-## How AI agents use this
+This is the part that turns this from "I have a CLI" into "my AI can
+send messages." Pick the pattern that matches your AI setup.
 
-Plug in the bundled skills (see [AGENTS.md](./AGENTS.md)) and the AI
-gets four tools:
+### Pattern A — Claude Code / Claude Desktop / Cursor / Continue (or any Anthropic-skills-aware client)
 
-- `share-my-card` — fetch this agent's contact code.
-- `add-contact` — paste a contact code, optionally with a nickname.
-- `send-message` — send to a contact by nickname or fingerprint.
-- `check-inbox` — list / read inbox messages.
+Tell your AI it has skills. Copy or symlink the `skills/` folder into
+your agent's skills directory:
 
-Each skill is a single `SKILL.md` with HTTP curl recipes and CLI
-recipes. Drop the folder into your agent system.
+```bash
+# Claude Code (and similar):
+cp -r skills/* ~/.claude/skills/
 
-Or, skip the skills convention entirely and call the loopback API
-directly:
+# Cursor: configure custom tools in settings -> Features -> Skills
+# (or wherever your client looks for SKILL.md files).
+```
+
+Your AI now has four new tools:
+`share-my-card`, `add-contact`, `send-message`, `check-inbox`.
+Each one is a single `SKILL.md` with HTTP recipes — the AI calls them
+whenever the user asks for the matching action.
+
+### Pattern B — Your own Python / TS agent
+
+The local API is loopback-only HTTP. Wire it as tools in your
+framework.
+
+**Python (LangChain, llama-index, raw OpenAI/Anthropic SDK, etc.):**
 
 ```python
 import httpx
 A2A = "http://127.0.0.1:4242"
 
+def my_contact_code() -> str:
+    """Return this agent's contact code, to share with someone you want to message."""
+    return httpx.get(f"{A2A}/api/me").json()["contact_code"]
+
 def add_contact(code: str, nickname: str | None = None):
-    return httpx.post(f"{A2A}/api/contacts", json={"code": code, "nickname": nickname}).json()
+    """Add someone to the contact list. Required before messaging them."""
+    return httpx.post(f"{A2A}/api/contacts",
+                      json={"code": code, "nickname": nickname}).json()
 
-def send(to: str, body: str, in_reply_to: str | None = None):
-    return httpx.post(f"{A2A}/api/send", json={"to": to, "body": body, "in_reply_to": in_reply_to}).json()
+def send_message(to: str, body: str, in_reply_to: str | None = None):
+    """Send a message. `to` is a contact's nickname or 12-char fingerprint."""
+    return httpx.post(f"{A2A}/api/send",
+                      json={"to": to, "body": body,
+                            "in_reply_to": in_reply_to}).json()
 
-def inbox(unread: bool = False):
-    return httpx.get(f"{A2A}/api/inbox", params={"unread": str(unread).lower()}).json()
+def check_inbox(unread_only: bool = False):
+    """Return inbox messages, newest first."""
+    return httpx.get(f"{A2A}/api/inbox",
+                     params={"unread": str(unread_only).lower()}).json()
 ```
 
-That's the full agent integration. Recipient-side spam filtering /
-prioritization / auto-reply is whatever the AI decides when it reads
-its inbox — there's no protocol layer to teach it.
+Register those four as tools / functions in whichever framework you
+use. The AI calls them when it decides it should.
 
----
+**TypeScript / Node:**
 
-## Production
+```typescript
+const A2A = "http://127.0.0.1:4242";
+const get  = (p: string) => fetch(`${A2A}${p}`).then(r => r.json());
+const post = (p: string, body: unknown) =>
+  fetch(`${A2A}${p}`, {method: "POST", headers: {"content-type":"application/json"},
+                       body: JSON.stringify(body)}).then(r => r.json());
 
-**The two questions you need answers to before running this in prod:**
+export const myContactCode = async () => (await get("/api/me")).contact_code;
+export const addContact = (code: string, nickname?: string) =>
+  post("/api/contacts", {code, nickname});
+export const sendMessage = (to: string, body: string, in_reply_to?: string) =>
+  post("/api/send", {to, body, in_reply_to});
+export const checkInbox = (unreadOnly = false) =>
+  get(`/api/inbox?unread=${unreadOnly}`);
+```
 
-1. What's the public HTTPS URL peers will use to reach your inbox?
-2. Where do you back up `AGENT_MASTER_KEY` and `data/agent.db`?
+### Pattern C — Just use the CLI as a tool
 
-### Public URL options (cheapest first)
-
-| Option | $/mo | HTTPS | Effort |
-|---|---|---|---|
-| Tailscale Funnel | 0 | auto | 1 minute |
-| Cloudflare Tunnel | 0 | auto | 5 minutes |
-| VPS + Caddy / Traefik | ~5 | auto via Let's Encrypt | 30 minutes |
-| Fly.io with volume | 0–5 | auto | medium |
-
-Vercel / Render free tiers are **not** a fit — they don't give you
-persistent disk for SQLite.
-
-### Single-instance container
+Any agent that can shell out can use `pnpm cli ...` directly. Output
+is JSON when you pass `--json`:
 
 ```bash
-docker build -t a2a:latest .
-
-docker run -d --name a2a --restart unless-stopped \
-  -e PUBLIC_BASE_URL=https://agent.yourdomain.com \
-  -e DISPLAY_NAME="Will's agent" \
-  -e AGENT_MASTER_KEY="$(openssl rand -base64 32)" \
-  -p 127.0.0.1:4242:4242 \
-  -v a2a-data:/app/data \
-  a2a:latest
+pnpm cli me --json
+pnpm cli contact add 'a2a1.<paste>' -n alice --json
+pnpm cli send alice "hey" --json
+pnpm cli inbox --unread --json
 ```
 
-Bind `127.0.0.1` and let your tunnel (Cloudflare / Tailscale) front
-TLS. **Save `AGENT_MASTER_KEY` somewhere safe** — without it you
-can't decrypt your private key, and your contact code becomes
-permanently invalid.
+### Pattern D — Your AI runs on a different host than a2a
 
-### What to monitor / back up
+By default `/api` is loopback-only for safety. To let a remote AI hit
+it, set `API_TOKEN=<random>` in `.env` and have the AI present
+`Authorization: Bearer <token>` on every request. Examples:
 
-- **Back up**: `AGENT_MASTER_KEY`, `data/agent.db`. Nothing else.
-- **Monitor**: `GET /healthz` from UptimeRobot or similar. Watch the
-  `messages` table for `status='failed'` rows.
+```bash
+curl -H "Authorization: Bearer $API_TOKEN" https://agent.yourdomain.com/api/me
+```
+
+Treat `API_TOKEN` like a password.
+
+## Step 6 — Exchange contact codes with someone
+
+Both parties have to add each other before either can message. There's
+no "friend request" — you just paste each other's codes.
+
+```bash
+# You
+pnpm cli me                     # prints your contact code
+# Send it to your friend (any channel: text, email, in person)
+
+# Your friend does `a2a me` on their side and sends you theirs.
+
+# You add their code:
+pnpm cli contact add 'a2a1.<their-code>' --nickname alice
+pnpm cli contact list           # verify
+
+# They do the same on their side with your code.
+```
+
+If only one side has added the other, the receiver will reject
+messages with `HTTP 403 not_a_contact`. That's the spam-resistance
+mechanism.
+
+## Step 7 — Send your first message
+
+```bash
+pnpm cli send alice "hey, your agent there?"
+pnpm cli inbox                  # check for replies
+pnpm cli read 01KSB...          # show one message + mark read
+```
+
+Or have your AI do it through the API you wired in Step 5.
 
 ---
+
+# What's in the protocol
+
+The whole thing fits in [SPEC.md](./SPEC.md) (~250 lines). One-paragraph
+summary:
+
+> Every message is a JSON envelope with `{id, version, from, to, timestamp,
+> in_reply_to, body, signature}`. `from` and `to` are base32-encoded
+> Ed25519 public keys. `signature` is Ed25519 over the canonical JSON
+> of the envelope minus the signature field. The receiver verifies the
+> signature, checks freshness (±5 min), rejects replays, checks the
+> sender is in its contacts, and writes the message to its inbox.
+
+No "type" field, no "payload" sub-schema — just a body string the
+receiving AI interprets.
+
+---
+
+# Operations
+
+## What to back up
+
+- The `AGENT_MASTER_KEY` value from `.env`. **Lose this and you lose
+  your identity** — you'll have to generate a new keypair and share a
+  new contact code with everyone.
+- `data/agent.db`. Holds your contacts and message history. Losing it
+  doesn't lose your identity but does lose your inbox.
+
+## What to monitor
+
+- `GET /healthz` — wire to UptimeRobot or similar.
+- Inspect `data/agent.db`'s `messages` table for `status='failed'`
+  rows (outbound deliveries that didn't go through).
 
 ## Security
 
-Full detail in [SPEC.md §Trust & §Security](./SPEC.md). Summary:
+- **Ed25519 + canonical JSON** on every envelope. Tampering invalidates
+  the signature.
+- **Symmetric contact requirement.** Only known senders reach your
+  inbox. Spam-by-default is impossible.
+- **TOFU on contact add.** The pubkey inside an `a2a1.*` code is what
+  the receiver will verify against forever. Share codes through a
+  channel you trust (in person, over an end-to-end-encrypted chat,
+  etc.).
+- **Replay & freshness.** ULID dedup + 5-minute timestamp window.
+- **Private key sealed at rest** with AES-256-GCM using your master key.
+- **Loopback-only `/api`** by default; opt-in `API_TOKEN` for remote.
+- **TLS in transit** required for prod. `ALLOW_INSECURE_HTTP=true`
+  permits plaintext only when you explicitly set it.
 
-- **Ed25519 signatures** over canonical JSON on every envelope.
-  Tamper anything and the receiver's verification fails.
-- **Symmetric contact requirement** — receiver rejects messages from
-  senders not in its address book. The recipient is always in
-  control of who can reach it.
-- **TOFU at add time** — when you import a contact code, you implicitly
-  trust the pubkey it carries. Sharing codes out-of-band (in person,
-  over an encrypted channel, etc.) is the trust anchor.
-- **Replay & freshness** — envelopes carry a ULID + timestamp; receiver
-  rejects duplicates and anything outside a 5-minute window.
-- **Loopback-only `/api` by default** — local agents talk to a2a over
-  127.0.0.1. Set `API_TOKEN` to enable bearer-authenticated access
-  from another host on your network.
-- **Private key sealing** — your private key is AES-256-GCM-sealed
-  with `AGENT_MASTER_KEY` before being written to SQLite.
-- **TLS in transit** — production peers must use HTTPS. Plaintext HTTP
-  is allowed only when `ALLOW_INSECURE_HTTP=true` (dev).
-
-Out of scope for v0.1: payload-level end-to-end encryption (the
-receiving server can read message bodies in cleartext). That's v1.0.
+Not in v0.1: payload-level end-to-end encryption (the receiving
+server can read message bodies at rest). That's v1.0; see
+[PLAN.md](./PLAN.md).
 
 ---
 
-## Development
+# Development
 
 ```bash
 pnpm install
@@ -212,26 +320,26 @@ pnpm typecheck    # strict TS, no errors
 pnpm test         # 33 tests, ~1s
 pnpm lint         # biome
 pnpm build        # → dist/
-pnpm demo         # two in-process agents, full message exchange
+pnpm demo         # two in-process agents trade a message
 ```
+
+Project layout is in [AGENTS.md](./AGENTS.md).
 
 ---
 
-## Licensing
+# Licensing
 
 | | License |
 |---|---|
 | Protocol spec (`SPEC.md`, wire format) | MIT — anyone can implement |
 | Reference implementation (`src/`, this repo) | AGPL-3.0-or-later |
 
-Permissive spec means any third party can ship a compatible
-implementation under any license. AGPL on the reference impl means
-hosted forks have to publish their modifications (Mastodon's model).
+Permissive spec, AGPL implementation. Same model as Mastodon.
 
 ---
 
-## Contributing
+# Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md). Bug reports and PRs welcome.
-Spec changes need an issue first — keeping it small is a feature, not
-an oversight.
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Issues and PRs welcome.
+Spec changes need an issue first — the protocol staying small is a
+feature, not an oversight.
