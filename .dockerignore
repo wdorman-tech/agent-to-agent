@@ -1,0 +1,15 @@
+node_modules
+dist
+data
+demo-data
+.git
+.gitignore
+.env
+.env.*
+*.log
+coverage
+.vscode
+.idea
+*.md
+!README.md
+!SPEC.md

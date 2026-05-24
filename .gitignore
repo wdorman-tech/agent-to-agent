@@ -1,0 +1,46 @@
+# Node
+node_modules/
+.pnpm-store/
+.npm/
+
+# Build
+dist/
+*.tsbuildinfo
+
+# Test
+coverage/
+.vitest/
+
+# Logs
+*.log
+logs/
+
+# Runtime data (per-instance)
+data/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-journal
+demo-data/
+
+# Calendar exports
+calendar.ics
+*.ics
+
+# Environment
+.env
+.env.*
+!.env.example
+!.env.compose.example
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# OS
+desktop.ini
